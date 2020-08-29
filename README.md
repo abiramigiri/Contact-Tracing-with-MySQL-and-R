@@ -1,4 +1,4 @@
-#Contact Tracing with MySQL and R
+# Contact Tracing with MySQL and R
 
 This repository contains my assignments for the Database Management Systems (CS5200) at Northeastern University during my Masters in Computer Science.
 
