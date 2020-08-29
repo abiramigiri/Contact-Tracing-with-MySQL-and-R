@@ -1,0 +1,679 @@
+---
+title: "R Notebook - Practicum 1"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+---
+<h4> Contact Tracing </h4>
+
+<h6> Abirami Vellingiri Thirunavukkarasu </h6>
+
+**USE CASE** :
+
+Contact Tracing is a vast problem with several use cases, the following are the use cases considered while designing this database:
+<ol>
+<li>Track the locations visited by all the users of the app, and store information regarding the infection status of the user (infected, not infected, suspected of infection). Using this information all the contacts of an infected user can be identified.</li>
+<li>Store test results, take regular assessments of the user’s vitals and symptoms via surveys and use this information to update the user’s infection status. This use case requires additional programming to implement and compute the values of the derived attributes. It will be done at a later stage via triggers, stored procedures, transactions and or application level code.</li>
+</ol>
+
+***
+
+**ASSUMPTIONS** :
+
+The following are the various assumptions made for each table in the database:
+<ol>
+<li><b>USER</b> : A User is anyone who accesses the contact tracing application. A User is a generalized class and has the subclasses NaiveUser and HealthCareAdmin. Generalization cannot be fully implemented through multiplicities alone. The disjoint nature of the subclasses will be enforced later on using transactions or triggers. The current multiplicities are, a User can be 0 or 1 HealthCareAdmin and a User can be 0 or 1 HealthCareAdmin.</li>
+<li><b>HEALTH CARE ADMIN</b> : A HealthCareAdmin is a user who’s account had additional privileges than that of a NaiveUser. This will be enforced through application logic later on. Each Health Care Admin can be 1 User.</li>
+<li><b>NAÏVE USER</b> : A NaïveUser is a member of the general public who uses the contact tracing system. Each NaïveUser can be 1 User. Each NaiveUser can make 0 to many Visits. Each NaiveUser takes 1 to many Survey. As soon as a NaiveUser registers and logs into the application they will be prompted to take a survey. So every NaiveUser will have taken at least one survey. Each NaiveUser takes 0 to many Tests. The infectionStatus of a NaiveUser indicates whether they are currently sick or not. This derived attribute will be updated using triggers later on.</li>
+<li><b>TEST</b> : A Test is either an Antibody, or RT-PCR test. When the result has the Boolean value FALSE, it indicates that the NaiveUser is not sick. When the result has the Boolean value TRUE, it indicates the NaiveUser is sick. Each Test belongs to only one NaiveUser.</li>
+<li><b>SURVEY</b> : Each Survey is taken by only one NaiveUser. The maskWorn variable is set to TRUE if the NaiveUser wore a mask that day and FALSE if they didn’t. Each Survey can record 0 to many Symptoms that a NaiveUser may have experienced that day.</li>
+<li><b>SYMPTOMS</b> : Each symptom may be recorded in 0 or many Surveys that are taken by NaiveUsers. The values in the Symptoms table can be updated each time a new Symptom of COVID-19 is identified by the CDC or WHO.</li>
+<li><b>VISIT</b> : The Visit table links the NaiveUser to all the Locations they may have visited. Each Visit belongs to only one NaiveUser and each Visit is made at only one Location.</li>
+<li><b>LOCATION</b> : Each row of the Location table stores every gpsCoordinate that was visisted by at least one NaiveUser. A Location can be in 1 or many Visit. Each Location can have only one Zipcode.</li>
+<li><b>ZIPCODE</b> : The Zipcode table stores the street, city and state corresponding to every Zipcode that a NaiveUser may have Visited. Each Zipcode has 1 or many Locations in it.</li></ol>
+
+***
+
+**Conceptual Model**
+
+![](practicum/conceptual.jpg)
+
+**Logical Model**
+
+[Lucid Chart Link For ERD](https://app.lucidchart.com/invitations/accept/86433d83-8cf0-46dc-87a5-068afc381066)
+
+![](practicum/logical.jpeg)
+
+***
+
+**RELATIONAL SCHEMA**
+
+User(<u>userID</u>, password, firstName, lastName, phone)
+
+HealthCareAdmin(<u><i>adminID</i></u>, region, qualification)
+
+NaiveUser(<u><i>naiveUserID</i></u>, gender, DOB, lastSync, infectionStatus)
+
+Zipcode(<u>zipcodeVal</u>, city, state, street)
+
+Location(<u>locationID</u>, gpsCoordinate, <i>zipcode</i>)
+
+Visit(<u>visitID</u>, <u><i>naiveUserID</i></u>, <u><i>locationID</i></u>, visitTime )
+
+Survey(<u>surveyID</u>, temperature, maskWorn, dateOfSurvey, <i>naiveUserID</i>)
+
+Symptoms(<u>symptomID</u>, symptomName)
+
+SurveySymptoms(<u><i>symptomID</i></u>, <u><i>surveyID</i></u>)
+
+Test(<u>testID</u>, testType, testDate, result, <i>naiveUserID</i>)
+
+***
+
+**NORMALIZATION**
+
+<b>USER</b>
+
+User(<u>userID</u>, password, firstName, lastName, phone)
+
+The Functional Dependencies are,
+
+userID => password
+
+userID => firstName
+
+userID => lastName
+
+userID => phone
+
+phone  => password
+
+phone => firstName
+
+phone => lastName
+
+phone => userID 
+
+Thus userID and Phone are the candidate keys. This relation is in BCNF as the candidate keys are the only determinants of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes. 
+
+
+<b>HEALTH CARE ADMIN </b>
+
+HealthCareAdmin(<u><i>adminID</i></u>, region, qualification)
+
+The Functional Dependencies are,
+
+adminID => qualification 
+
+Thus adminID is the only candidate key. This relation is in BCNF as the primary key is the only determinant of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes.
+
+
+<b> NAÏVE USER </b>
+
+NaiveUser(<u><i>naiveUserID</i></u>, gender, DOB, lastSync, infectionStatus)
+
+The Functional Dependencies are,
+
+naiveUserID => gender
+
+naiveUserID => DOB
+
+naiveUserID => lastSync
+
+naiveUserID => infectionStatus
+
+Thus naiveUserID is the only candidate key. This relation is in BCNF as the primary key is the only determinant of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes.
+
+<b> ZIPCODE </b>
+
+Zipcode(<u>zipcodeVal</u>, city, state, street)
+
+The Functional Dependencies are,
+
+zipcodeVal => city
+
+zipcodeVal => state
+
+zipCodeVal => street
+
+Since there may be more than one city in the same state with the same name, city does not determine state. There may also be more than one street with the same name in the same city. Thus zipcodeVal is the only candidate key. This relation is in BCNF as the primary key is the only determinant of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes.
+
+<b> LOCATION </b>
+
+Location(<u>locationID</u>, gpsCoordinate, <i>zipcode</i>)
+
+The Functional Dependencies are,
+
+locationID => zipcode
+
+locationID => gpsCoordinate
+
+gpsCoordinate => zipcode
+
+gpsCoordinate => locationID
+
+Thus locationID and  gpsCoordinate are the candidate keys. This relation is in BCNF as the candidate keys are the only determinants of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes.
+
+<b> VISIT </b>
+
+Visit(<u>visitID</u>, <u><i>naiveUserID</i></u>, <u><i>locationID</i></u>, visitTime )
+
+visitID => naiveUserID
+
+visitID => locationID
+
+visitID => visitTime
+
+visitID is the only candidate key and so it is the primary key. This relation is in BCNF as the primary key is the only determinant of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes.
+
+<b> SURVEY </b>
+
+Survey(<u>surveyID</u>, temperature, maskWorn, dateOfSurvey, <i>naiveUserID</i>)
+
+surveyID => temperature
+
+surveyID => maskWorn
+
+surveyID => dateOfSurvey
+
+surveyID => naiveUserID
+
+surveyID is the only candidate key and so it is the primary key. This relation is in BCNF as the primary key is the only determinant of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes.
+
+<b> SYMPTOMS </b>
+
+Symptoms(<u>symptomID</u>, symptomName)
+
+symptomID => symptomName
+
+symptomName => symptomID
+
+Thus symptomID and  symptomName are the candidate keys. This relation is in BCNF as the candidate keys are the only determinants of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes.
+
+<b> SURVEY SYMPTOMS </b>
+
+SurveySymptoms(<u><i>symptomID</i></u>, <u><i>surveyID</i></u>)
+
+symptomID and surveyID are a composite primary key. There are no dependencies that violate BCNF, hence this association relation is in BCNF.
+
+<b> TEST </b>
+
+Test(<u>testID</u>, testType, testDate, result, <i>naiveUserID</i>)
+
+testID => testType
+
+testID => testDate
+
+testID => result
+
+testID => naiveUserID
+
+The same user can take multiple tests on the same day and get different results. So, there are no more FDs than those mentioned above. testID is the only candidate key, and so it is the primary key. This relation is in BCNF as the primary key is the only determinant of every FD. There is no partial dependency as well. There are no transitive dependencies. And there are no multivalued attributes.
+
+***
+
+**TABLE CREATION**
+
+```{r}
+library(RMySQL)
+library(DBI)
+library(RColorBrewer)
+conn = dbConnect(MySQL(), userName="root", password="idontknow", dbname="ContactTrace", host="localhost",port = 3306)
+```
+
+```{r}
+dbSendQuery(conn,'CREATE TABLE IF NOT EXISTS User(
+  userID INTEGER AUTO_INCREMENT PRIMARY KEY,
+  password VARCHAR(20) NOT NULL,
+  firstName VARCHAR(50) NOT NULL,
+  lastName VARCHAR(50) NOT NULL,
+  phone VARCHAR(20) NOT NULL
+);')
+
+dbSendQuery(conn,'CREATE TABLE IF NOT EXISTS HealthCareAdmin(
+  adminID INTEGER PRIMARY KEY,
+  qualification VARCHAR(50),
+  FOREIGN KEY(adminID) REFERENCES User(userID)
+);')
+
+dbSendQuery(conn,"CREATE TABLE IF NOT EXISTS NaiveUser(
+  naiveUserID INTEGER PRIMARY KEY,
+  gender ENUM ('Male','Female','Trans','Other'),
+  DOB DATE NOT NULL,
+  lastSync DATETIME,
+  infectionStatus ENUM('Infected','Suspected','NotInfected') DEFAULT 'NotInfected',
+  FOREIGN KEY(naiveUserID) REFERENCES User(userID)
+);")
+
+dbSendQuery(conn,"CREATE TABLE IF NOT EXISTS Zipcode(
+  zipcodeVal INTEGER PRIMARY KEY,
+  street CHAR(30),
+  city CHAR(30),
+  state CHAR(30)
+);")
+
+dbSendQuery(conn,"CREATE TABLE IF NOT EXISTS Location(
+  locationID INTEGER AUTO_INCREMENT PRIMARY KEY,
+  gpsCoordinate VARCHAR(100) NOT NULL,
+  zipcode INTEGER NOT NULL,
+  FOREIGN KEY(zipcode) REFERENCES Zipcode(zipcodeVal)
+);")
+
+dbSendQuery(conn, "CREATE TABLE IF NOT EXISTS Visit(
+  visitID INTEGER AUTO_INCREMENT PRIMARY KEY,
+  visitTime DATETIME NOT NULL,
+  naiveUserID INTEGER NOT NULL,
+  locationID INTEGER NOT NULL,
+  FOREIGN KEY(naiveUserID) REFERENCES NaiveUser(naiveUserID),
+  FOREIGN KEY(locationID) REFERENCES Location(locationID)
+);")
+
+dbSendQuery(conn,"CREATE TABLE IF NOT EXISTS Survey(
+  surveyID INTEGER AUTO_INCREMENT PRIMARY KEY,
+  temperature INTEGER NOT NULL,
+  maskWorn BOOLEAN NOT NULL,
+  dateOfSurvey DateTime NOT NULL,
+  naiveUserID INTEGER NOT NULL,
+  FOREIGN KEY(naiveUserID) REFERENCES NaiveUser(naiveUserID),
+  CHECK (temperature > 30 AND temperature <115)
+);")
+
+dbSendQuery(conn,"CREATE TABLE IF NOT EXISTS Symptoms(
+  symptomID INTEGER AUTO_INCREMENT PRIMARY KEY,
+  symptomName CHAR(100) NOT NULL
+);")
+
+dbSendQuery(conn,"CREATE TABLE IF NOT EXISTS SurveySymptoms(
+  surveyID INTEGER NOT NULL,
+  symptomID INTEGER NOT NULL,
+  PRIMARY KEY(surveyID,symptomID),
+  FOREIGN KEY(surveyID) REFERENCES Survey(surveyID),
+  FOREIGN KEY(symptomID) REFERENCES Symptoms(symptomID)
+);")
+
+dbSendQuery(conn, "CREATE TABLE IF NOT EXISTS Test(
+  testID INTEGER AUTO_INCREMENT PRIMARY KEY,
+  testType ENUM('RT-PCR','Antibody'),
+  testDate DATE NOT NULL,
+  result BOOLEAN NOT NULL,
+  naiveUserID INTEGER NOT NULL,
+  FOREIGN KEY(naiveUserID) REFERENCES NaiveUser(naiveUserID)
+);")
+
+dbDisconnect(conn)
+```
+
+
+![](practicum/creation.png)
+
+The INSERTs that violate any of the integrity constrains of the tables, fail as shown below.
+
+
+![](practicum/constraints.png)
+
+***
+
+**QUERIES**
+
+```{r}
+library(RMySQL)
+library(DBI)
+library(RColorBrewer)
+conn = dbConnect(MySQL(), userName="root", password="idontknow", dbname="ContactTrace", host="localhost",port = 3306)
+```
+
+```{r}
+#1. A SELECT CASE query for finding the infectionStatus of All existing Users
+
+val1 = dbFetch(dbSendQuery(conn, 'SELECT naiveUserID, infectionStatus,
+CASE
+    WHEN infectionStatus = "NotInfected" THEN "The user is not infected!"
+    WHEN infectionStatus = "Suspected" THEN "The user may be infected!"
+    WHEN infectionStatus = "Infected" THEN "The user is infected!"
+END
+FROM NaiveUser;'))
+
+val1
+```
+
+
+```{r}
+#2. Count of number of users who are infected, suspected and notinfected
+
+val2 = dbFetch(dbSendQuery(conn,"SELECT NaiveUser.infectionStatus, COUNT(NaiveUser.naiveUserID) FROM NaiveUser GROUP BY
+NaiveUser.infectionStatus ORDER BY NaiveUser.infectionStatus;"))
+
+val2
+```
+
+
+```{r}
+#3. A query with a JOIN of 3 tables to find all the dates, times and locations of the places visited by users who are either infected or suspected of infection
+
+val3 = dbFetch(dbSendQuery(conn,'SELECT DISTINCT NaiveUser.naiveUserID, Visit.visitTime, Location.locationID FROM NaiveUser, Location, Visit WHERE
+NaiveUser.naiveUserID = Visit.naiveUserID AND
+Visit.locationID = Location.locationID AND
+NaiveUser.infectionStatus IN ("Infected","Suspected");'))
+
+val3
+```
+
+
+```{r}
+#4. A query using the GROUP BY and HAVING clause to find all the names of users who have more than 2 symptoms
+
+val4 = dbFetch(dbSendQuery(conn,'SELECT DISTINCT User.firstName FROM User, NaiveUser, Survey, SurveySymptoms WHERE
+User.userID = NaiveUser.naiveUserID AND
+NaiveUser.naiveUserID = Survey.naiveUserID AND
+Survey.surveyID = SurveySymptoms.surveyID
+GROUP BY NaiveUser.naiveUserID HAVING COUNT(SurveySymptoms.symptomID > 2);'))
+
+val4
+```
+
+
+```{r}
+#5. A complex search query which was executed using sub queries to find the count of all the contacts of an infected User with userID = 13*/
+
+val5 = dbFetch(dbSendQuery(conn,'SELECT COUNT(DISTINCT NaiveUser.naiveUserID) FROM NaiveUser, Visit 
+WHERE NaiveUser.naiveUserID = Visit.naiveUserID AND
+Visit.visitTime IN (SELECT DISTINCT Visit.visitTime FROM Visit, NaiveUser WHERE
+NaiveUser.naiveUserID = Visit.naiveUserID AND
+NaiveUser.naiveUserID = 13) AND Visit.locationID IN (SELECT DISTINCT Visit.locationID
+FROM Visit, NaiveUser WHERE
+NaiveUser.naiveUserID = Visit.naiveUserID AND
+NaiveUser.naiveUserID = 13);'))
+
+val5
+
+```
+
+```{r}
+#Plotting results of Query 2
+
+count = as.integer(val2$`COUNT(NaiveUser.naiveUserID)`)
+coul = brewer.pal(3,"Set1")
+barplot(count,
+xlab = "InfectionStatus",
+names.arg = c("Infected","Suspected","Not Infected"), ylab = "Users Count",
+col=coul)
+
+dbDisconnect(conn)
+
+
+```
+
+***
+
+**INSERTION SCRIPT**
+
+INSERT INTO User(password,firstName,lastName,phone)
+ VALUES("123456","Abirami","Giri",9486286696),
+ ("76tbjb2","Susan","Bose",8765432190),
+ ("98dssd6","Jane","Doe",8946289056),
+ ("hrgher","John","Doe",789037358949),
+ ("jhfdwfa","Mary","Jane",8798342983462),
+ ("fjghd","Mark","Twain",873635464749),
+ ("ugjmere","Jason","Derulo",74683745354),
+ ("jfhgdnbgmdg","Kevin","Jonas",874834627342),
+ ("dbfdbfmf","Kevin","Jonas",82678687687568),
+ ("gdjwhfejw","Joe","Jonas",87492834692847),
+ ("123456","Abi","Giri",94862869696),
+ ("76tbjb2","Sue","Bose",87654332190),
+ ("98dssd6","Jane","Doe",89461289056),
+ ("hrgher","John","Doe",7890137358949),
+ ("jhfdwfa","Mary","Jane",87983432983462),
+ ("fjghd","Mark","Twain",8731635464749),
+ ("ugjmere","Jason","Derulo",7463745354),
+ ("jfhgdnbgmdg","Kevin","Jonas",87483467342),
+ ("dbfdbfmf","Kevin","Jonas",8267687687568),
+ ("gdjwhfejw","Joe","Jonas",8749283492847),
+ ("123456","Abirami","Giri",9486286696),
+ ("76tbjb2","Susan","Bose",8765432190),
+ ("98dssd6","Jane","Doe",8946289056),
+ ("hrgher","John","Doe",789037358949),
+ ("jhfdwfa","Mary","Jane",8798342983462),
+ ("fjghd","Mark","Twain",873635464749),
+ ("ugjmere","Jason","Derulo",74683745354),
+ ("jfhgdnbgmdg","Kevin","Jonas",874834627342),
+ ("dbfdbfmf","Kevin","Jonas",82678687687568),
+ ("gdjwhfejw","Joe","Jonas",87492834692847),
+ ("123456","Abi","Giri",94862869696),
+ ("76tbjb2","Sue","Bose",87654332190),
+ ("98dssd6","Jane","Doe",89461289056),
+ ("hrgher","John","Doe",7890137358949),
+ ("jhfdwfa","Mary","Jane",87983432983462),
+ ("fjghd","Mark","Twain",8731635464749),
+ ("ugjmere","Jason","Derulo",7463745354),
+ ("jfhgdnbgmdg","Kevin","Jonas",87483467342),
+ ("dbfdbfmf","Kevin","Jonas",8267687687568),
+ ("gdjwhfejw","Joe","Jonas",8749283492847);
+
+ INSERT INTO HealthCareAdmin(adminID,qualification)
+ VALUES("1","adminstaff");
+
+ INSERT INTO NaiveUser(naiveUserID,gender,DOB,lastSync,infectionStatus)
+ VALUES("3",'Female',"1998-01-20",'2020-07-18 23:59:59','Infected'),
+ ("4",'Female',"1998-01-20",'2020-07-18 23:59:59','Infected'),
+ ("5",'Male',"1957-01-20",'2020-07-18 23:59:59','Infected'),
+ ("6",'Female',"1998-01-20",'2020-07-18 23:59:59','Infected'),
+ ("7",'Other',"1988-01-20",'2020-07-18 23:59:59','Infected'),
+ ("8",'Male',"1998-01-20",'2020-07-18 23:59:59','Infected'),
+ ("9",'Trans',"1978-01-20",'2020-07-18 23:59:59','Infected'),
+ ("10",'Female',"1998-01-20",'2020-07-18 23:59:59','Infected'),
+ ("11",'Male',"1968-01-20",'2020-07-18 23:59:59','Infected'),
+ ("12",'Female',"1998-01-20",'2020-07-18 23:59:59','Infected'),
+ ("13",'Female',"1998-01-20",'2020-07-18 23:59:59','Suspected'),
+ ("14",'Female',"1998-01-20",'2020-07-18 23:59:59','Suspected'),
+ ("15",'Male',"1957-01-20",'2020-07-18 23:59:59','Suspected'),
+ ("16",'Female',"1998-01-20",'2020-07-18 23:59:59','Suspected'),
+ ("17",'Other',"1988-01-20",'2020-07-18 23:59:59','Suspected'),
+ ("18",'Male',"1998-01-20",'2020-07-18 23:59:59','Suspected'),
+ ("19",'Trans',"1978-01-20",'2020-07-18 23:59:59','Suspected');
+
+ INSERT INTO NaiveUser(naiveUserID,gender,DOB,lastSync)
+ VALUES("20",'Female',"1998-01-20",'2020-07-18 23:59:59'),
+ ("21",'Male',"1968-01-20",'2020-07-18 23:59:59'),
+ ("22",'Female',"1998-01-20",'2020-07-18 23:59:59'),
+ ("23",'Female',"1958-01-20",'2020-07-18 23:59:59'),
+ ("24",'Female',"1988-01-20",'2020-07-18 23:59:59'),
+ ("25",'Male',"1987-01-20",'2020-07-18 23:59:59'),
+ ("26",'Female',"1998-01-20",'2020-07-18 23:59:59'),
+ ("27",'Other',"1988-01-20",'2020-07-18 23:59:59'),
+ ("28",'Male',"1998-01-20",'2020-07-18 23:59:59'),
+ ("29",'Trans',"1978-01-20",'2020-07-18 23:59:59'),
+ ("30",'Female',"1998-01-20",'2020-07-18 23:59:59'),
+ ("31",'Male',"1968-01-20",'2020-07-18 23:59:59'),
+ ("32",'Female',"1998-01-20",'2020-07-18 23:59:59'),
+ ("33",'Female',"1998-01-20",'2020-07-18 23:59:59'),
+ ("34",'Female',"1998-01-20",'2020-07-18 23:59:59'),
+ ("35",'Male',"1957-01-20",'2020-07-18 23:59:59'),
+ ("36",'Female',"1998-01-20",'2020-07-18 23:59:59'),
+ ("37",'Other',"1988-01-20",'2020-07-18 23:59:59'),
+ ("38",'Male',"1998-01-20",'2020-07-18 23:59:59'),
+ ("39",'Trans',"1978-01-20",'2020-07-18 23:59:59'),
+ ("40",'Female',"1998-01-20",'2020-07-18 23:59:59');
+
+INSERT INTO Survey(temperature,maskWorn,dateOfSurvey,naiveUserID)
+VALUES(100,1,"2020-07-18 23:59:59",3),
+(100,1,"2020-07-18 23:59:59",4),
+(100,1,"2020-07-18 23:59:59",5),
+(100,1,"2020-07-18 23:59:59",6),
+(100,1,"2020-07-18 23:59:59",7),
+(100,1,"2020-07-18 23:59:59",8),
+(100,1,"2020-07-18 23:59:59",9),
+(100,1,"2020-07-18 23:59:59",10),
+(100,1,"2020-07-18 23:59:59",11),
+(100,1,"2020-07-18 23:59:59",12),
+(100,1,"2020-07-18 23:59:59",13),
+(100,1,"2020-07-18 23:59:59",14),
+(100,1,"2020-07-18 23:59:59",15),
+(100,1,"2020-07-18 23:59:59",16),
+(100,1,"2020-07-18 23:59:59",17),
+(100,1,"2020-07-18 23:59:59",18),
+(100,1,"2020-07-18 23:59:59",19),
+(100,1,"2020-07-18 23:59:59",20),
+(100,1,"2020-07-18 23:59:59",21),
+(98,1,"2020-07-18 23:59:59",22),
+(98,1,"2020-07-18 23:59:59",23),
+(98,1,"2020-07-18 23:59:59",24),
+(98,1,"2020-07-18 23:59:59",25),
+(98,1,"2020-07-18 23:59:59",26),
+(98,1,"2020-07-18 23:59:59",27),
+(98,1,"2020-07-18 23:59:59",28),
+(98,1,"2020-07-18 23:59:59",29),
+(98,1,"2020-07-18 23:59:59",30),
+(98,1,"2020-07-18 23:59:59",31),
+(98,1,"2020-07-18 23:59:59",32),
+(98,1,"2020-07-18 23:59:59",33),
+(98,1,"2020-07-18 23:59:59",34),
+(98,1,"2020-07-18 23:59:59",35),
+(98,1,"2020-07-18 23:59:59",36),
+(98,1,"2020-07-18 23:59:59",37),
+(98,1,"2020-07-18 23:59:59",38),
+(98,1,"2020-07-18 23:59:59",39),
+(98,1,"2020-07-18 23:59:59",40);
+
+INSERT INTO Symptoms(symptomName)
+VALUES("cold"),
+("cough"),
+("fever"),
+("loss of taste");
+
+INSERT INTO SurveySymptoms(surveyID,symptomID)
+VALUES(30,1),
+(38,2),
+(30,4),
+(31,4),
+(10,4),
+(10,2),
+(12,4),
+(13,3),
+(14,3),
+(15,3);
+
+INSERT INTO TEST(testType,testDate,result,naiveUserID)
+VALUES("RT-PCR","2020-07-18",1,3),
+ ("RT-PCR","2020-07-18",1,5),
+ ("RT-PCR","2020-07-18",1,19),
+ ("RT-PCR","2020-07-18",1,4),
+ ("RT-PCR","2020-07-18",1,7),
+ ("RT-PCR","2020-07-18",1,8),
+ ("RT-PCR","2020-07-18",1,33),
+ ("RT-PCR","2020-07-18",1,23),
+ ("RT-PCR","2020-07-18",1,18),
+ ("RT-PCR","2020-07-18",1,30);
+
+ INSERT INTO Zipcode(zipcodeVal,street,city,state)
+ VALUES(02115,"Huntington Ave"," Boston","Massachusetts"),
+ (90012,"Grand Ave","Los Angeles","California"),
+ (10003,"Main Street","New York","New York");
+
+INSERT INTO Location(gpsCoordinate,zipcode)
+VALUES("41.40338 2.17403",02115),
+("41.40338 2.17403",02115),
+("41.40337 2.17403",02115),
+("41.40338 2.18403",02115),
+("41.40338 6.17403",02115),
+("41.41338 2.17403",02115),
+("41.40338 2.17203",02115),
+("41.40338 2.17403",02115),
+("41.40038 2.17403",02115),
+("41.40338 2.17413",02115),
+("41.40338 2.17403",02115),
+("43.40338 2.17403",02115),
+("44.40338 2.17403",02115),
+("43.40338 2.17403",02115),
+("41.40338 2.17403",02115),
+("49.40338 2.17403",02115),
+("41.40338 2.17403",02115),
+("41.40338 2.17403",02115),
+("41.40338 5.17403",02115),
+("41.50338 2.17403",02115),
+("43.40338 2.17403", 90012),
+("45.40338 2.17403", 90012),
+("47.40337 2.17403", 90012),
+("47.40338 2.18403", 90012),
+("49.40338 6.17403", 90012),
+("43.41338 2.17403", 90012),
+("41.40338 2.17203", 90012),
+("40.40338 2.17403", 90012),
+("41.40038 2.17403", 90012),
+("41.40338 7.17413", 90012),
+("41.40338 8.17403", 90012),
+("43.40338 9.17403", 90012),
+("44.40338 10.17403", 90012),
+("43.40338 11.17403", 90012),
+("41.40338 12.17403", 90012),
+("49.40338 10.17403", 90012),
+("41.40338 21.17403", 90012),
+("41.40338 22.17403", 90012),
+("41.40338 53.17403", 90012),
+("41.50338 22.17403", 90012),
+("43.40338 2.17103", 10003),
+("45.40338 2.17203", 10003),
+("47.40337 2.17303", 10003),
+("47.40338 2.18403", 10003),
+("49.40338 6.17503", 10003),
+("43.41338 2.17603", 10003),
+("41.40338 2.17703", 10003),
+("40.40338 2.17803", 10003),
+("41.40038 2.17903", 10003),
+("41.40338 7.171013", 10003),
+("41.40338 8.174103", 10003),
+("43.40338 9.174023", 10003),
+("44.40338 10.174033", 10003),
+("43.40338 11.174403", 10003),
+("41.40338 12.174503", 10003),
+("49.40338 10.174603", 10003),
+("41.40338 21.174603", 10003),
+("41.40338 22.174703", 10003),
+("41.40338 53.174803", 10003),
+("41.50338 29.17403", 10003);
+
+INSERT INTO Visit(visitTime,naiveUserID,locationID)
+VALUES("2020-07-19 12:50:59",3,1),
+("2020-07-19 12:50:59",20,1),
+("2020-07-19 12:50:59",23,1),
+("2020-07-19 12:50:59",13,1),
+("2020-07-19 12:50:59",21,1),
+("2020-07-19 12:50:59",14,1),
+("2020-07-19 12:50:59",31,1),
+("2020-07-19 12:50:59",32,1),
+("2020-07-19 12:50:59",33,1),
+("2020-07-19 12:50:59",34,1),
+("2020-06-19 12:50:59",19,1),
+("2020-06-19 12:50:59",20,1),
+("2020-06-19 12:50:59",23,1),
+("2020-06-19 12:50:59",13,1),
+("2020-06-19 12:50:59",21,1),
+("2020-06-19 12:50:59",14,1),
+("2020-06-19 12:50:59",31,1),
+("2020-06-19 12:50:59",32,1),
+("2020-06-19 12:50:59",33,1),
+("2020-06-19 12:50:59",34,1),
+("2020-05-19 12:50:59",3,1),
+("2020-05-19 12:50:59",20,1),
+("2020-05-19 12:50:59",23,1),
+("2020-05-19 12:50:59",13,1),
+("2020-05-19 12:50:59",21,1),
+("2020-05-19 12:50:59",14,1),
+("2020-05-19 12:50:59",13,1),
+("2020-05-19 12:50:59",32,1),
+("2020-05-19 12:50:59",33,1),
+("2020-05-19 12:50:59",34,1),
+("2021-07-19 12:50:59",3,10),
+("2021-07-19 12:50:59",20,11),
+("2021-07-19 12:50:59",23,5),
+("2021-07-19 12:50:59",13,7),
+("2021-07-19 12:50:59",21,8),
+("2021-07-19 12:50:59",14,9),
+("2021-07-19 12:50:59",31,10),
+("2021-07-19 12:50:59",32,11),
+("2021-07-19 12:50:59",33,12);
+
+***
+
