@@ -1,0 +1,911 @@
+---
+title: "R Notebook - Practicum 2"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE, # show warnings
+  message = TRUE, # show messages
+  error = TRUE, # do not interrupt generation in case of errors,
+  echo = TRUE  # show R code
+)
+
+library(RMySQL)
+library(DBI)
+
+```
+
+<h4> Contact Tracing </h4>
+
+<h6> Abirami Vellingiri Thirunavukkarasu </h6>
+
+
+```{r}
+# Establishing connection to database.
+
+conn = dbConnect(MySQL(), userName="root", password="idontknow", dbname="PRACTICUM", host="localhost",port = 3306)
+```
+
+***
+## PRACTICUM 2 TASKS {.tabset}
+
+### TASK 1
+
+**Task 1 - Create at least one view to help abstract a complex query. The view must be based on at least two tables and involve a join or subquery.**
+
+**VIEW CREATION**
+
+A View of all the users and the locations they visited and time of the visits. The View is spread over 4 tables and makes use of JOINS. Creating this view saves time and computation power as this is a query that will be run often.
+
+
+```{r}
+dbSendQuery(conn,'CREATE OR REPLACE VIEW Infected_User_Location_Time AS
+SELECT row_number() over(partition by Visit.visitTime order by Visit.visitTime)
+AS "logID", NaiveUser.naiveUserID, Zipcode.street, Zipcode.city, Zipcode.state, Zipcode.zipcodeVal,
+Visit.visitTime, NaiveUser.infectionStatus
+FROM NaiveUser JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID JOIN Zipcode ON Location.zipcode = Zipcode.zipcodeVal;')
+```
+
+### TASK 2
+
+**Task 2 - Perform a query using the view created in (1).**
+
+**QUERY ON VIEW**
+
+Query from the created View to find all places visited by infected users and the time of their visit. This query is much simpler to execute now because of the view. 
+
+```{r}
+
+viewQueryVal = dbGetQuery(conn, 'SELECT * from Infected_User_Location_Time WHERE infectionStatus IN ("Infected");')
+
+viewQueryVal
+
+```
+
+### TASK 3
+
+**Task 3: Implementing CRUD operations for one data object.**
+
+#### CRUD: { .tabset }
+
+CRUD on the Zipcode Object. (Table name = Zipcode, it has the street, city and state for each zipcode.)
+
+##### CREATE 
+
+Creating many Zipcodes by entering new rows of values into the Zipcode table using a dataframe to input the street, city and state.
+
+```{r}
+CreateZip <- function(dfzip) {
+
+dbSendQuery(conn,"SET GLOBAL local_infile=1;")  
+  
+dbWriteTable(
+  conn,
+  "Zipcode",
+  dfzip,
+  field.types = NULL,
+  row.names = FALSE,
+  overwrite = FALSE,
+  append = TRUE,
+  allow.keywords = FALSE
+)
+ 
+dbSendQuery(conn,"SET GLOBAL local_infile=0;")  
+}
+
+dfzip <- data.frame("zipcodeVal" = c(641038,641019), "street" = c("street1","street2"), "city" = c("Coimbatore","Bangalore"), "state" = c("Tamil Nadu","Karnataka"))
+
+CreateZip(dfzip)
+```
+
+##### READ
+
+Reading Zipcode by searching for the Zipcode with the given zipcodeVal from the Zipcode table. The Zipcodes created with the above function are being read here.
+
+```{r}
+ReadZip <- function(zip){
+  
+  query <- paste("SELECT * FROM Zipcode WHERE zipcodeVal = ",zip,";", sep='')
+  value <- dbGetQuery(conn,query)
+  value
+}
+ReadZip(641038)
+ReadZip(641019)
+```
+
+##### UPDATE
+
+Updating a street name by searching for the Zipcode with the given zipcodeVal from the Zipcode table and updating value of street with the new value.
+
+
+```{r}
+UpdateZipStreet <- function(x){
+  
+query <- paste("UPDATE Zipcode SET street = '",x[2],"' WHERE zipcodeVal = ",x[1],";",sep='')
+
+dbSendQuery(conn,query)
+
+}
+x <- c(641038,"main street")
+UpdateZipStreet(x)
+```
+
+Demonstrating that the UpdateZipStreet function works. The Zipcode with zipcodeVal 641038 has had its street name changed from street1 to main street
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT * from Zipcode WHERE zipcodeVal = 641038;')
+
+viewQueryVal
+```
+##### DELETE
+
+Deleting a Zipcode by searching for the Zipcode with the given zipcodeVal and removing that row from the Zipcode table.
+
+```{r}
+DeleteZip <- function(zip){
+  
+  query <- paste("DELETE FROM Zipcode WHERE zipcodeVal = ",zip,";", sep='')
+  
+  dbSendQuery(conn,query)
+}
+
+DeleteZip(641038)
+```
+
+Demonstrating that the DeleteZip function works. The Zipcode has been deleted and so the select statement returns 0 rows.
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT * from Zipcode WHERE zipcodeVal = 641038;')
+
+viewQueryVal
+```
+#### {-}
+
+### TASK 4
+
+**Task 4: Build a trigger to manage data integrity, e.g., a cardinality constraint, a multiplicity constraint, or a data constraint.**
+
+**TRIGGER TO ENSURE DATA INTEGRITY**
+
+Trigger to manage Data Integrity : A Data Constraint Trigger to ensure that a phone number stored in the User table is always at least 10 digits long. The Trigger throws an error and prevents insertion of a tuple with phone number being less than 10 digits long.
+
+```{r}
+dbSendQuery(conn, 'DROP TRIGGER IF EXISTS Phone_Validation;')
+
+dbSendQuery(conn,'CREATE TRIGGER Phone_Validation BEFORE INSERT ON User
+FOR EACH ROW
+BEGIN
+  DECLARE errorMsg VARCHAR(128);
+  IF LENGTH(NEW.phone)<10 THEN
+		set errorMsg = concat("Phone_Validation_Error: Phone number must have at least 10 digits: ", cast(NEW.phone AS CHAR));
+        SIGNAL SQLSTATE "45000" SET message_text = errorMsg;
+  END IF;
+END;')
+```
+
+**TRIGGER DEMONSTRATION**
+
+Trigger Demonstration by attempting to insert a phone number that has lesser than 10 digits. 
+
+The intention of this trigger is to throw an error when the phone number is less than 10 digits. I have included a trycatch block for error handling which shows the trigger throwing an error as expected.
+
+```{r}
+tryCatch(
+expr = {
+dbSendQuery(conn,'INSERT INTO User(password,firstName,lastName,phone)
+VALUES("1234565","Shruti","Prakash",99);')
+  
+}
+,error = function(e){
+  print(e)
+}
+)
+
+```
+
+Select statement to show that the tuple with phone number which did not satisfy the constraints was not inserted into the table.
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT * from USER WHERE phone = "99";')
+
+viewQueryVal
+```
+
+Trigger Demonstration by attempting to insert a phone number that has at least 10 digits and satisfies the constraint enforced by trigger.
+
+```{r}
+dbSendQuery(conn,'INSERT INTO User(password,firstName,lastName,phone)
+VALUES("1234565","Shruti","Prakash","9865289997");')
+```
+
+Select statement to show that the tuple with phone number which satisfied the constraints was inserted into the table.
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT * from USER WHERE phone = "9865289997";')
+
+viewQueryVal
+```
+
+### TASK 5
+
+**TASK 5 - Build a trigger to keep a derived attribute up to date. Show that the trigger works.**
+
+**TRIGGER TO UPDATE DERIVED ATTRIBUTE**
+
+Trigger to store a derived attribute. This trigger monitors the data being inserted into the Test table. If the result of a test is "1" which implies that the user tested positive for covid-19 and their infectionStatus is set to "Infected". If the result of a test is "0" which implies that the user tested negative for covid-19 and their infectionStatus is set to "NotInfected". 
+
+```{r}
+dbSendQuery(conn, 'DROP TRIGGER IF EXISTS Infection_Status_After_Insert_Test;')
+
+dbSendQuery(conn,'CREATE TRIGGER Infection_Status_After_Insert_Test AFTER INSERT ON Test
+FOR EACH ROW
+BEGIN
+	IF NEW.result = 1 THEN
+		UPDATE NaiveUser
+        SET NaiveUser.infectionStatus = "Infected"
+        WHERE NaiveUser.naiveUserID = NEW.naiveUserID;
+    ELSEIF NEW.result = 0 THEN
+		UPDATE NaiveUser
+        SET NaiveUser.infectionStatus = "NotInfected"
+        WHERE NaiveUser.naiveUserID = NEW.naiveUserID;
+    END IF;
+END;')
+```
+
+**TRIGGER DEMONSTRATION**
+
+Trigger demonstration by adding test results for a NaiveUser with id 22.
+
+Checking the current Infection Status of User with the ID 22
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT NaiveUser.infectionStatus FROM NaiveUser WHERE NaiveUser.naiveUserID = 22;')
+
+viewQueryVal
+```
+Adding a test with results set to positive for user 22
+
+```{r}
+dbSendQuery(conn,'INSERT INTO TEST(testType,testDate,result,naiveUserID)
+VALUES("RT-PCR","2020-09-30",1,22);')
+```
+
+Checking the Infection Status of User with the ID 22 after a positive test result has been inserted
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT NaiveUser.infectionStatus FROM NaiveUser WHERE NaiveUser.naiveUserID = 22;')
+
+viewQueryVal
+```
+
+Adding a test with results set to negative for user 22
+
+```{r}
+dbSendQuery(conn,'INSERT INTO TEST(testType,testDate,result,naiveUserID)
+VALUES("RT-PCR","2020-09-30",0,22);')
+```
+
+Checking the Infection Status of User with the ID 22 after a negative test result has been inserted
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT NaiveUser.infectionStatus FROM NaiveUser WHERE NaiveUser.naiveUserID = 22;')
+
+viewQueryVal
+```
+
+
+### TASK 6
+
+**TASK 6 - Build a stored procedure to implement an update to the database; the update must involve multiple tables**
+
+**STORED PROCEDURE**
+
+Implementing a stored procedure to contact trace all the users who may have come in contact with an infected user by visiting the same place at the same time as an infected user. The stored procedure updates the infection status of these contacts as "Suspected". The stored procedure works on multiple tables and uses that information to update the NaiveUser table.
+
+```{r}
+dbSendQuery(conn, 'DROP PROCEDURE IF EXISTS Contact_Trace;')
+
+dbSendQuery(conn,'CREATE PROCEDURE Contact_Trace()
+BEGIN
+DECLARE userid INTEGER;
+DECLARE finish INTEGER DEFAULT 0;
+DECLARE Contact_Cursor CURSOR FOR
+SELECT DISTINCT NaiveUser.naiveUserID FROM NaiveUser
+JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID WHERE (Location.gpsCoordinate, Visit.visitTime) IN
+(SELECT Location.gpsCoordinate, Visit.visitTime FROM NaiveUser
+JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID WHERE NaiveUser.infectionStatus = "Infected")
+AND NaiveUser.infectionStatus <> "Infected";
+DECLARE CONTINUE HANDLER FOR NOT FOUND SET finish = 1;
+
+OPEN Contact_Cursor;
+infectionstatus :LOOP
+	FETCH FROM Contact_Cursor INTO userid;
+    IF finish = 0 THEN
+    UPDATE NaiveUser
+    SET InfectionStatus = "Suspected" WHERE naiveUserID = userid;
+    ELSEIF finish = 1 THEN
+    LEAVE infectionstatus;
+    END IF;
+END LOOP infectionstatus;
+CLOSE Contact_Cursor;
+END;')
+
+```
+
+
+**STORED PROCEDURE DEMONSTRATION**
+
+Checking the infection status of users who came in contact with infected users before calling the stored procedure. 
+
+```{r}
+
+viewQueryVal = dbGetQuery(conn, 'SELECT DISTINCT NaiveUser.naiveUserID, NaiveUser.infectionStatus FROM NaiveUser
+JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID WHERE (Location.gpsCoordinate, Visit.visitTime) IN
+(SELECT Location.gpsCoordinate, Visit.visitTime FROM NaiveUser
+JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID WHERE NaiveUser.infectionStatus = "Infected")
+AND NaiveUser.infectionStatus <> "Infected";')
+
+viewQueryVal
+```
+Calling Stored Procedure
+
+```{r}
+dbSendQuery(conn, 'CALL Contact_Trace();')
+```
+
+Checking the infection status of users who came in contact with infected users AFTER calling the stored procedure. The contacts' infection status has been updated to "Suspected" ,as intended.
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT DISTINCT NaiveUser.naiveUserID, NaiveUser.infectionStatus FROM NaiveUser
+JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID WHERE (Location.gpsCoordinate, Visit.visitTime) IN
+(SELECT Location.gpsCoordinate, Visit.visitTime FROM NaiveUser
+JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID WHERE NaiveUser.infectionStatus = "Infected")
+AND NaiveUser.infectionStatus <> "Infected";')
+
+viewQueryVal
+```
+
+***
+
+### TASK 7
+
+**Task 7 - CRUD Transactions**
+
+#### TRANSACTIONS IN CRUD {.tabset}
+
+##### CREATE
+
+This Create transaction is for the purpose of handling insertion among generalized classes. Every User is either a NaiveUser or a HealthCare Admin. So the insertion of a User can be handled with a transaction where the child(NaiveUser or HealthCareAdmin) table is also inserted into simultaneously. In this transaction the values for User table and the child table of choice are passed as data frames and the choice of which child table to insert into is determined by the "which" argument in the function. 
+
+```{r}
+CreateUser <- function(dfParent, dfChild, which)
+{
+  tryCatch(  
+  expr = {
+dbBegin(conn)
+dbSendQuery(conn,"SET GLOBAL local_infile=1;")  
+dbWriteTable(
+  conn,
+  "User",
+  dfParent,
+  field.types = NULL,
+  row.names = FALSE,
+  overwrite = FALSE,
+  append = TRUE,
+  allow.keywords = FALSE
+)
+
+if(which == "naive")
+{
+  dbWriteTable(
+  conn,
+  "NaiveUser",
+  dfChild,
+  field.types = NULL,
+  row.names = FALSE,
+  overwrite = FALSE,
+  append = TRUE,
+  allow.keywords = FALSE
+)
+
+  query1 <- paste("SELECT * FROM User WHERE UserID = ",dfParent["userID"],";", sep='')
+  value1 <- dbGetQuery(conn,query1)
+   query2 <- paste("SELECT * FROM NaiveUser WHERE NaiveUserID = ",dfChild["naiveUserID"],";", sep='')
+  value2 <- dbGetQuery(conn,query2)
+  
+  if(length(value1$userID)>0&&length(value2$naiveUserID)>0){
+    print("Committed!")
+dbCommit(conn)}
+  else
+  {
+    print("Rolledback")
+    dbRollback(conn)
+  }  
+  
+}
+else if (which =="admin")
+{
+    dbWriteTable(
+  conn,
+  "HealthCareAdmin",
+  dfChild,
+  field.types = NULL,
+  row.names = FALSE,
+  overwrite = FALSE,
+  append = TRUE,
+  allow.keywords = FALSE
+)
+  
+  query3 <- paste("SELECT * FROM User WHERE UserID = ",dfParent["userID"],";", sep='')
+  value3 <- dbGetQuery(conn,query3)
+   query4 <- paste("SELECT * FROM HealthCareAdmin WHERE adminID = ",dfChild["adminID"],";", sep='')
+  value4 <- dbGetQuery(conn,query4)
+  value4
+  
+  if(length(value3$userID)>0&&length(value4$adminID)>0){
+    print("Committed!")
+dbCommit(conn)}
+  else
+  {
+    print("Rolledback")
+    dbRollback(conn)
+  }
+}
+
+}, error = function(e)
+{
+  print(e)
+}
+)
+if(dbCommit(conn)==TRUE)
+{
+  print("Transaction Closed")
+}
+else
+{
+  print("Rolledback")
+  dbRollback(conn)
+}
+  
+  dbSendQuery(conn,"SET GLOBAL local_infile=0;")  
+
+}
+```
+
+Test data for inserting a NaiveUser
+
+```{r}
+dfUser1 <- data.frame("userID" = 302, "password" = "guessme123", "firstName" = "Chandler", "lastName" = "Bing", "phone" = "99999996666888")
+dfNaiveUser <- data.frame("naiveUserID" = 302, "gender" = "Male", "DOB" = "1957-01-20", "lastSync" = "2020-07-18 23:59:59")
+```
+
+Test data for inserting a HealthCareAdmin
+
+```{r}
+dfUser2 <- data.frame("userID" = 3002, "password" = "guessme123", "firstName" = "Ross", "lastName" = "Geller", "phone" = "99999996666888")
+dfAdmin <- data.frame("adminID" = 3002, "qualification" = "Doctor")
+```
+
+Running the transaction to insert a NaiveUser
+
+```{r}
+CreateUser(dfUser1,dfNaiveUser,"naive")
+```
+
+Searching for the tuple AFTER running the transaction shows the inserted tuple.
+
+```{r}
+viewQueryVal1 = dbGetQuery(conn, 'SELECT * from User WHERE userID = 302;')
+viewQueryVal1
+viewQueryVal2 = dbGetQuery(conn, 'SELECT * from NaiveUser WHERE naiveUserID = 302;')
+viewQueryVal2
+```
+
+Running the transaction to insert a HealthCareAdmin
+
+```{r}
+CreateUser(dfUser2,dfAdmin,"admin")
+```
+
+Searching for the tuple AFTER running the transaction shows the inserted tuple.
+
+```{r}
+viewQueryVal1 = dbGetQuery(conn, 'SELECT * from User WHERE userID = 3002;')
+viewQueryVal1
+viewQueryVal2 = dbGetQuery(conn, 'SELECT * from HealthCareAdmin WHERE adminID = 3002;')
+viewQueryVal2
+```
+
+Running the transaction to insert incorrect values for the child(NaiveUser) to see if it rollsback the creation of parent(User) as well. Using naiveUserID = 2864. There is no user with that ID hence this value will not be inserted due to it failing the Foreign key constraint
+
+```{r}
+dfUser3 <- data.frame("userID" = 251, "password" = "123", "firstName" = "Monica", "lastName" = "Bing", "phone" = "9999973888")
+
+dfnu3 <- data.frame("naiveUserID" = 2864, "gender" = "Female", "DOB" = "1957-01-20", "lastSync" = "2020-07-18 23:59:59")
+
+CreateUser(dfUser3,dfnu3,"naive")
+```
+
+Searching for the tuple AFTER running the transaction to check if the incorrect insert of child rollsback the insert of parent as well.
+
+```{r}
+viewQueryVal1 = dbGetQuery(conn, 'SELECT * from User WHERE userID = 251;')
+viewQueryVal1
+viewQueryVal2 = dbGetQuery(conn, 'SELECT * from NaiveUser WHERE naiveUserID = 2864;')
+viewQueryVal2
+```
+
+##### READ
+
+Reading the SurveySymptoms table to view if a NaiveUser is experiencing a particular symptom, should be implemented as a transaction. This is because, while one database admin is accessing this information, another may delete the symptom, the survey, or the naiveuser itself. Hence we first check if the NaiveUser, Survey and Symptoms exist by querying their tables. Only if they exist, we query the SurveySymtomps table to verify if the naiveUser is experiencing that symptom.
+
+```{r}
+ReadNaiveUserSymptom <- function(ns)
+{
+  tryCatch(  
+  expr = {
+  dbBegin(conn)
+  query1 <- paste("SELECT * FROM NaiveUser WHERE naiveUserID = ",ns[1],";", sep='')
+  value1 <- dbGetQuery(conn,query1)
+  query2 <- paste("SELECT * FROM Survey WHERE surveyID = ",ns[2],";", sep='')
+  value2 <- dbGetQuery(conn,query2)
+  query3 <- paste("SELECT * FROM Symptoms WHERE symptomName = '",ns[3],"';", sep='')
+  value3 <- dbGetQuery(conn,query3)
+  
+  if(length(value1$naiveUserID)>0&&length(value2$surveyID)>0&&length(value3$symptomID)>0)
+  {
+  query4 <- paste("SELECT * FROM SurveySymptoms WHERE surveyID = ",ns[2]," AND symptomID= ",as.integer(value3$symptomID),";", sep='')
+  value4 <- dbGetQuery(conn,query4)
+
+  if(length(value4$surveyID)>0&&length(value4$symptomID)>0){
+    print(paste("Yes, User",ns[1],"has the symptom",ns[3],"and it was mentioned in the survey with id",ns[2]))
+  }
+  else{
+    print(paste("No, User",ns[1],"did not mention the symptom",ns[3],"in the survey with id",ns[2]))
+  }
+  print("Committed!")
+  dbCommit(conn)
+  }
+  else
+  {
+    print("Rolledback")
+    dbRollback(conn)
+  }
+}, error = function(e)
+{
+  print(e)
+}
+)
+
+if(dbCommit(conn)==TRUE)
+{
+  print("Transaction Closed")
+}
+else
+{
+  print("Rolledback")
+  dbRollback(conn)
+}
+}
+
+
+ns <- c(3,121,"fever")
+ReadNaiveUserSymptom(ns)
+
+```
+
+
+```{r}
+
+ns <- c(3,121,"cough")
+ReadNaiveUserSymptom(ns)
+
+```
+
+Trying to READ or SELECT a survey that does not exist causes the transaction to rollback.
+
+```{r}
+ns <- c(3,1200000,"cough")
+ReadNaiveUserSymptom(ns)
+```
+
+##### UPDATE
+
+Updating the Infection Status of a NaiveUser must be done only after Updating their test results. This is important because, without validating a NaiveUser's infection status of COVID-19 using a test result, anyone can simply claim to be infected or not infected. Hence this transaction ensures that the UPDATE to test results and infection status are synchronised. I have made a different trigger to update the naiveUser's infection status when new test results are inserted. But this transaction handles the issue of updating infection status in NaiveUser table when the last row in the test table's result value is modified or updated.This transaction is only used to modify or update the result of the most recent test taken by the USER.
+
+```{r}
+UpdateInfectionStatus <- function(is)
+{
+  tryCatch(  
+  expr = {
+    
+query0 <- paste("SELECT testID, result, naiveUserID FROM Test WHERE testID = ",is[4]," AND naiveUserID = ",is[3],";",sep='')
+
+value0 <- dbGetQuery(conn,query0)
+    
+    if(length(value0$testID)<=0){
+      print("Rolledback")
+      dbRollback(conn)
+    }
+    else{
+dbBegin(conn)
+  
+query1 <- paste("UPDATE Test SET result = ",is[1]," WHERE testID = ",is[4],";",sep='')
+dbSendQuery(conn,query1)
+
+query3 <- paste("SELECT result FROM Test WHERE testID = ",is[4],";", sep='')
+value <- dbGetQuery(conn,query3)
+if(value == is[1]){
+query2 <- paste("UPDATE NaiveUser SET infectionStatus = '",is[2],"' WHERE naiveUserID = ",is[3],";",sep='')
+dbSendQuery(conn,query2)
+print("Committed!")
+dbCommit(conn)
+}
+else{
+  print("Rolledback")
+  dbRollback(conn)
+}
+}
+}, error = function(e)
+{
+  print(e)
+}
+)
+
+if(dbCommit(conn)==TRUE)
+{
+  print("Transaction Closed")
+}
+else
+{
+  print("Rolledback")
+  dbRollback(conn)
+}
+}
+```
+
+Demonstrating that the transaction works. Searching for the tuple before running the transaction to show the value before updation
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT NaiveUser.infectionStatus, Test.result from NaiveUser, Test WHERE NaiveUser.naiveUserID = Test.naiveUserID AND NaiveUser.naiveUserID =40 AND Test.testID = 1000;')
+
+viewQueryVal
+```
+Running the transaction and searching for the tuple AFTER running the transaction shows the updated tuple.
+
+```{r}
+is <- c(0,"NotInfected",40,1000)
+
+UpdateInfectionStatus(is)
+
+viewQueryVal = dbGetQuery(conn, 'SELECT NaiveUser.infectionStatus, Test.result from NaiveUser, Test WHERE NaiveUser.naiveUserID = Test.naiveUserID AND NaiveUser.naiveUserID =40 AND Test.testID = 1000;')
+
+viewQueryVal
+```
+
+Trying to update the result of a Test that does not exist for a NaiveUser causes the transaction to rollback
+
+```{r}
+is <- c(1,"Infected",40,5000)
+
+UpdateInfectionStatus(is)
+```
+
+##### DELETE
+
+Whenever a NaiveUser is deleted, the respective row in the User table must also be deleted. Since User is the parent class and NaiveUser is the child. Every User must be either a NaiveUser or a HealthCare Admin. For the purpose of this practicum I am implementing the transaction to delete only the NaiveUser and it's linked row in User.
+
+```{r}
+DeleteNaiveUserAndUser <- function(naiveUserID,userID){
+   tryCatch(  
+  expr = {
+  dbBegin(conn)
+   if(naiveUserID != userID) {
+     print("Rolledback")
+      dbRollback(conn)
+   }
+    else{
+  query1 <- paste("DELETE FROM NaiveUser WHERE naiveUserID = ",naiveUserID,";", sep='')
+  dbSendQuery(conn,query1)
+  query2 <- paste("DELETE FROM User WHERE userID = ",naiveUserID,";", sep='')
+  dbSendQuery(conn,query2)
+  query3 <- paste("SELECT * FROM User WHERE userID = ",naiveUserID,";", sep='')
+  value3 <- dbGetQuery(conn,query3)
+  query4 <- paste("SELECT * FROM NaiveUser WHERE naiveUserID = ",naiveUserID,";", sep='')
+  value4 <- dbGetQuery(conn,query4)
+  
+  if(length(value3$userID)==0&&length(value4$naiveUserID)==0){
+    print("Committed!")
+    dbCommit(conn)
+  }
+  else
+  {
+    print("Rolledback")
+    dbRollback(conn)
+  }
+    }
+  
+}, error = function(e)
+{
+  print(e)
+}
+)
+
+if(dbCommit(conn)==TRUE)
+{
+  print("Transaction Closed")
+}
+else
+{
+  print("Rolledback")
+  dbRollback(conn)
+}
+  
+}
+```
+
+Demonstrating that the transaction works by searching for the tuple in USER before running the transaction to delete the tuples
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT * FROM User WHERE userID = 900;')
+
+viewQueryVal
+```
+Searching for the tuple in NaiveUser before running the transaction to delete the tuples.
+
+```{r}
+
+viewQueryVal = dbGetQuery(conn, 'SELECT * FROM NaiveUser WHERE naiveUserID = 900;')
+
+viewQueryVal
+
+```
+Running the transaction and searching for the tuple AFTER running the transaction and deleting the tuples from User.
+
+```{r}
+DeleteNaiveUserAndUser(900,900)
+
+viewQueryVal = dbGetQuery(conn, 'SELECT * FROM User WHERE userID = 900;')
+
+viewQueryVal
+```
+
+Searching for the tuple AFTER running the transaction and deleting the tuples from NaiveUser
+
+```{r}
+
+viewQueryVal = dbGetQuery(conn, 'SELECT * FROM NaiveUser WHERE naiveUserID = 900;')
+
+viewQueryVal
+```
+
+Trying to delete a NaiveUser without deleting the respective User causes the transaction to Rollback
+
+```{r}
+DeleteNaiveUserAndUser(800,900)
+```
+
+#### {-}
+
+### TASK 8
+
+**Task 8 - View the query plan for two alternatives of the same query. Compare the plan for the two queries and comment on the differences and how you would choose one versus another.**
+
+#### QUERY PLAN EVALUATION FOR TWO ALTERNATIVES {.tabset}
+
+Two alternative queries to contact trace all the users who came in contact with infected users by going to the same place, at the same time as an infected user. 
+
+##### Query 1
+
+A self join query to implement the above mentioned search.
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT DISTINCT nu2.naiveUserID, nu2.infectionStatus FROM naiveuser nu2
+JOIN visit v2 ON v2.naiveUserID = nu2.naiveUserID
+JOIN location l2 ON l2.locationID = v2.locationID
+JOIN (SELECT gpsCoordinate, visitTime FROM naiveuser nu
+	JOIN visit v ON v.naiveUserID = nu.naiveUserID
+	JOIN location l ON l.locationID = v.locationID
+	WHERE nu.infectionStatus = "Infected") travel
+    ON travel.gpsCoordinate = l2.gpsCoordinate
+    AND travel.visitTime = v2.visitTime
+WHERE nu2.infectionStatus <> "Infected";')
+
+viewQueryVal
+```
+
+![](practicumfiles/selfjoin.png)
+![](practicumfiles/selfjointable.png)
+
+##### Query 2
+
+A query with subqueries to implement the above mentioned search.
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT DISTINCT NaiveUser.naiveUserID, NaiveUser.infectionStatus FROM NaiveUser
+JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID WHERE (Location.gpsCoordinate, Visit.visitTime) IN
+(SELECT Location.gpsCoordinate, Visit.visitTime FROM NaiveUser
+JOIN Visit ON NaiveUser.naiveUserID = Visit.naiveUserID JOIN Location ON
+Visit.locationID = Location.locationID WHERE NaiveUser.infectionStatus = "Infected")
+AND NaiveUser.infectionStatus <> "Infected";')
+
+viewQueryVal
+
+```
+
+![](practicumfiles/explain.png)
+![](practicumfiles/withoutindexsubquerytable.png)
+
+##### Query Plan Evaluation
+
+Query 1 is a self-join query on a group of tables (Visit, Location and NaiveUser) which compares the gpsCoordinate and VisitTime of every non infected NaiveUser, against the gpsCoordinate and VisitTime of every infected NaiveUser. By doing so, we obtain all the first level contacts of infected NaiveUsers.
+
+Query 2 also runs over a join on Visit, Location and NaiveUser. It uses subqueries to obtain all the gpsCoordinate and VisitTime of every infected NaiveUser and traces their contacts by comparing the gpsCoordinate and VisitTime of every non infected user to the results of the sub query.
+
+
+| **Comparison Criteria**       | **Query 1 (Self Join)** | **Query 2 (Sub Query)** |
+|-------------------------------|-------------------------|-------------------------|
+| Number of full table scans    | 2                       | 2                       |
+| Total number of rows searched | 90                      | 88                      |
+| Number of Nested Loops        | 4                       | 5                       |
+| Number of Hash Joins          | 1                       | 0                       |
+| Select Types                  | Simple, Materialized    | Simple                  |
+| Join Types                    | All, eq\-ref            | All, eq\-ref, ref       |
+| Cost of Query                 | 97\.37                  | 96\.19                  |
+| Fetch Time                    | 0\.000014               | 0\.000010               |
+          |   |
+
+On Comparing the two queries, <b>Query 2 is the better choice</b> as it has less cost and a faster execution time. It is also more readable as it makes use of sub queries while self joins are harder to debug. Query 1 and Query 2 both have two ALL joins, and 4 eq ref Joins. But Query 1 has one additional ref join. But in spite of this it performs better. With a larger dataset, a greater difference in cost can be visualized. Among the two queries, Query 2 shows the greatest improvements in cost and execution time upon indexing. Hence Query 2 is the better alternative in my opinion.
+
+#### {-}
+
+### TASK 9
+
+**TASK 9 - Add an index for a non-key attribute used in one of the queries in (8) and redo (8) to see new performance and query plan.**
+
+**9. INDEX TO IMPROVE QUERY PERFORMANCE**
+
+Index to improve Query 2
+
+The index is made on the Visit table for the visitTime and LocationID attributes as visitTime is a non unique, descriptive attribute which is constantly searched through in the query.
+
+```{r}
+viewQueryVal = dbGetQuery(conn, 'SELECT DISTINCT 1        
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = "PRACTICUM" AND TABLE_NAME="Visit" AND
+INDEX_NAME="visit_location";')
+
+if(viewQueryVal!=1)
+{
+dbSendQuery(conn, 'ALTER TABLE Visit ADD INDEX visit_location (visitTime,locationID);')
+}
+```
+
+
+![](practicumfiles/index.png)
+![](practicumfiles/indextable.png)
+
+Upon using an index on VisitTime and locationID, the performance of Query 2 is greatly improved. The cost comes down to 59.55. This is because, indexing replaces the non-unique key look-up in Query 2 with a unique key look-up. And so, the ref Join in Query 2 is transformed into an eq ref join. 
+
+## {-}
+***
+
+[Back to top](#)
+
+```{r}
+#Disconnecting from database
+
+dbDisconnect(conn)
+```
+
